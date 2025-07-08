@@ -79,7 +79,6 @@ int main(void)
 	while (1) {
 #if LOOPBACK_MODE
 		LOG_INF("--- Loopback Test Cycle ---");
-		LOG_INF("Transmitting: %s", tx_buffer);
 #else
 		// Assert CS (set low) before transmission
 		gpio_pin_set(cs_gpio, CS_PIN, 0);
