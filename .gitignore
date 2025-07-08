@@ -1,0 +1,11 @@
+build/
+.west/
+out/
+zephyr/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+merged.hex
+nrf52840dk_nrf52840.key
+Testing/ 

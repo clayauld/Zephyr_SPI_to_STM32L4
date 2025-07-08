@@ -1,0 +1,22 @@
+# 2 spaces for js, ts, jsx and tsx files
+# 4 spaces for cpp, hpp, html, css, scss and json files
+# tab for yaml files
+# trim trailing whitespace for all files
+# insert final newline for all files set to false
+[*.{js,ts,jsx,tsx,cjs,mjs,json}]
+indent_style = space
+indent_size = 2
+trim_trailing_whitespace = true
+insert_final_newline = false
+
+[*.{cpp,hpp,html,css,scss}]
+indent_style = space
+indent_size = 4
+trim_trailing_whitespace = true
+insert_final_newline = false
+
+[*.yaml,*.yml]
+indent_style = space
+indent_size = 2
+trim_trailing_whitespace = true
+insert_final_newline = false
