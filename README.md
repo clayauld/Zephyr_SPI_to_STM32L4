@@ -1,4 +1,4 @@
-# Zephyr SPI to STM32L4 Zephyr Project
+# SPI to STM32L4 Zephyr Project
 
 This project demonstrates SPI (Serial Peripheral Interface) communication using Zephyr RTOS. The application acts as an SPI master that sends data to an STM32L4 device and receives responses.
 
