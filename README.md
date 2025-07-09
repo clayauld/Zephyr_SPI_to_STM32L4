@@ -5,16 +5,18 @@ This project demonstrates SPI (Serial Peripheral Interface) communication using 
 ## Project Overview
 
 The application implements:
-- SPI master configuration with 1MHz frequency
-- 8-bit word size communication
-- Continuous data transmission with 1-second intervals
-- Console logging for debugging and monitoring
+- SPI master configuration with 125kHz frequency (minimum for nRF52840)
+- 8-bit word size communication with Mode 0 (CPOL=0, CPHA=0)
+- **Hardware chip select (CS) control using SPI driver and code configuration**
+- Continuous data transmission with 10-second intervals
+- Enhanced console logging with hex and ASCII output
+- Specific response validation from STM32L4 target
 
 ## Prerequisites
 
 - Zephyr RTOS development environment
 - Python virtual environment with Zephyr SDK
-- Supported hardware (nRF series or compatible board)
+- Supported hardware (nRF52840DK or compatible board)
 - STM32L4 target device for SPI communication
 
 ## Project Structure
@@ -22,6 +24,7 @@ The application implements:
 ```
 Zephyr_SPI_to_STM32L4/
 ├── boards/           # Board-specific configurations
+│   └── nrf52840dk_nrf52840.overlay  # Custom SPI2 pin assignments with hardware CS
 ├── src/
 │   └── main.c       # Main application source
 ├── CMakeLists.txt    # CMake configuration
@@ -37,7 +40,7 @@ Zephyr_SPI_to_STM32L4/
 The project is configured with:
 - **SPI Support**: Full SPI driver support with nRFX backend
 - **Logging**: Comprehensive logging system for debugging
-- **GPIO**: GPIO support for SPI control signals
+- **GPIO**: GPIO support for hardware chip select control
 - **UART Console**: Console output for monitoring
 - **Printk**: Kernel print support
 
@@ -49,122 +52,120 @@ The project is configured with:
 
 ### SPI Configuration
 
-- **Mode**: Master mode
-- **Frequency**: 1 MHz
+- **Mode**: Master mode with Mode 0 (CPOL=0, CPHA=0)
+- **Frequency**: 125 kHz (minimum for nRF52840)
 - **Word Size**: 8 bits
-- **Chip Select**: Hardware chip select enabled (P0.15)
-- **Loopback Mode**: Available for testing (configurable in main.c)
+- **Chip Select**: Hardware chip select enabled (P0.15, SPI2)
+- **Target Device**: STM32L4 SPI Slave
 - **Data**: Sends "Hello from nRF" message
-- **Interval**: 1-second transmission cycles
+- **Expected Response**: "Hi from STM32"
+- **Interval**: 10-second transmission cycles
 
-## Building and Running
+## Hardware Chip Select (CS) Configuration
 
-### Using Makefile (Recommended)
+**To enable hardware CS, you must configure BOTH:**
 
-1. **Build the project (with pristine build):**
-   ```bash
-   make build
-   ```
+1. **Devicetree overlay** (`boards/nrf52840dk_nrf52840.overlay`):
+   - Set the CS pin in the SPI2 node:
+     ```dts
+     &spi2 {
+         status = "okay";
+         pinctrl-0 = <&spi2_default>;
+         pinctrl-1 = <&spi2_sleep>;
+         pinctrl-names = "default", "sleep";
+         cs-gpios = <&gpio0 15 GPIO_ACTIVE_LOW>;
+     };
+     ```
+2. **Code configuration** (`src/main.c`):
+   - Set the `.cs` field in your `struct spi_config`:
+     ```c
+     struct spi_config spi_cfg = {
+         .frequency = 125000,
+         .operation = SPI_OP_MODE_MASTER | SPI_WORD_SET(8) | SPI_TRANSFER_MSB,
+         .slave = 0,
+         .cs = {
+             .gpio = GPIO_DT_SPEC_GET(SPI_NODE, cs_gpios),
+         },
+     };
+     ```
+- **If you do not set `.cs` in code, the driver will NOT toggle the CS line!**
 
-2. **Flash to target device:**
-   ```bash
-   make flash
-   ```
-
-3. **Monitor serial output:**
-   ```bash
-   make monitor
-   ```
-
-4. **Clean build artifacts:**
-   ```bash
-   make clean
-   ```
-
-5. **Full rebuild:**
-   ```bash
-   make rebuild
-   ```
-
-6. **Build and flash in one step:**
-   ```bash
-   make build-flash
-   ```
-
-### Manual Build Commands
-
-If you prefer manual commands:
-
-```bash
-# Activate virtual environment
-source ../.venv/bin/activate
-
-# Build the project (with pristine to avoid conflicts)
-west build -b <your_board> . --pristine
-
-# Flash to device
-west flash
-
-# Monitor output
-west espressif monitor
-```
-
-## Hardware Setup
-
-### SPI Connections
-
-Connect your target STM32L4 device with the following SPI pins:
-
-| Signal | Description |
-|--------|-------------|
-| SCK    | Serial Clock |
-| MOSI   | Master Out Slave In |
-| MISO   | Master In Slave Out |
-| CS     | Chip Select (if needed) |
 
 ### Pin Configuration
 
 The default SPI configuration uses:
-- **SPI Node**: `spi1` (configurable in main.c)
+- **SPI Node**: `spi2` (configurable in main.c)
 - **Slave Select**: 0 (configurable in main.c)
+- **Chip Select**: Hardware chip select on P0.15
 
-#### Default Pins for nRF52840DK
+#### Default Pins for nRF52840DK (SPI2)
 
-When using the nRF52840DK board, the default SPI1 pins are:
+| Signal | Pin Name | Pin Number | Description |
+|--------|----------|------------|-------------|
+| SCK    | P0.12    | 12         | Serial Clock |
+| MOSI   | P0.13    | 13         | Master Out Slave In |
+| MISO   | P0.14    | 14         | Master In Slave Out |
+| CS     | P0.15    | 15         | Hardware Chip Select |
 
-| Signal | Pin Name | Pin Number |
-|--------|----------|------------|
-| SCK    | P0.12    | 12         |
-| MOSI   | P0.13    | 13         |
-| MISO   | P0.14    | 14         |
-| CS     | P0.15    | 15 (hardware chip select) |
+**Note**: These are custom SPI2 pin assignments for the nRF52840DK using a board overlay. The CS pin (P0.15) is configured for hardware chip select control through both devicetree and code.
 
-**Note**: These are custom SPI1 pin assignments for the nRF52840DK using a board overlay. The CS pin (P0.15) is configured for hardware chip select operation.
+### STM32L4 Target Configuration
 
-### Loopback Testing
+The application is designed to communicate with an STM32L4 device configured as an SPI slave:
 
-For testing SPI communication without an external device, you can enable loopback mode:
+- **SPI Mode**: Slave mode with Mode 0 (CPOL=0, CPHA=0)
+- **Frequency**: Must support 125kHz master clock
+- **Word Size**: 8 bits
+- **Expected Response**: "Hi from STM32" (14 bytes)
 
-1. **Enable Loopback Mode**: Set `LOOPBACK_MODE` to `1` in `src/main.c`
-2. **Hardware Connection**: Connect MOSI (P0.13) to MISO (P0.14) with a jumper wire
-3. **Build and Flash**: Use `make build-flash` to deploy the loopback firmware
-4. **Monitor Output**: Use `make monitor` to see the loopback test results
+## Application Behavior
 
-**Loopback Features**:
-- Automatic data verification (transmitted vs received)
-- Pass/fail status reporting
-- Disabled chip select control (not needed for loopback)
-- Enhanced logging for debugging
+### Transmission Cycle
 
-**Expected Output in Loopback Mode**:
+The application performs the following cycle every 10 seconds:
+
+1. **Transaction Start**: Hardware CS automatically pulled low by SPI driver
+2. **Data Transmission**: Sends "Hello from nRF" (14 bytes)
+3. **Data Reception**: Receives response from STM32L4
+4. **Transaction End**: Hardware CS automatically pulled high by SPI driver
+5. **Validation**: Checks if received data matches expected response
+6. **Logging**: Outputs detailed transaction information
+
+### Expected Output
+
+**Normal Operation:**
 ```
-=== LOOPBACK MODE ENABLED ===
-Connect MOSI (P0.13) to MISO (P0.14) for loopback testing
-CS pin will be ignored in loopback mode
---- Loopback Test Cycle ---
-Transmitting: Hello from nRF
-Loopback received: Hello from nRF
-✓ Loopback test PASSED - data matches
+=== nRF52840 SPI Master - Hardware CS Test ===
+Target: STM32L4 SPI Slave
+Frequency: 125 kHz
+Mode: CPOL=0, CPHA=0 (Mode 0)
+Data size: 8-bit
+Chip Select: Hardware CS enabled
+Test: Full buffer transmission
+Send: 'Hello from nRF'
+Expect: 'Hi from STM32'
+==============================================
+
+SPI device ready
+
+Starting continuous SPI transmission test...
+Will send: 'Hello from nRF' (14 bytes) every 10 seconds
+
+=== Transaction 1 ===
+Sending: 'Hello from nRF' (14 bytes)
+SPI transaction completed successfully!
+Sent: 'Hello from nRF'
+Received: 48 69 20 66 72 6F 6D 20 53 54 4D 33 32 00
+Received ASCII: Hi from STM32
+SUCCESS: Received expected response 'Hi from STM32'
+Waiting 10 seconds before next transaction...
+```
+
+**Error Conditions:**
+```
+ERROR: SPI device not ready
+ERROR: SPI transaction failed: -5
+ERROR: Unexpected response received
 ```
 
 ## Monitoring and Debugging
@@ -172,9 +173,10 @@ Loopback received: Hello from nRF
 ### Console Output
 
 The application provides detailed logging:
-- **INFO**: Successful SPI transactions
-- **ERROR**: SPI communication failures
-- **Received Data**: Echo of received data from STM32L4
+- **INFO**: Successful SPI transactions and device initialization
+- **ERROR**: SPI communication failures and device errors
+- **Received Data**: Both hex and ASCII representation of received data
+- **Validation**: Automatic response validation against expected data
 
 ### Common Issues
 
@@ -184,9 +186,21 @@ The application provides detailed logging:
    - Ensure target device is powered
 
 2. **Communication Errors**
-   - Verify SPI frequency compatibility
-   - Check word size configuration
+   - Verify SPI frequency compatibility (125kHz)
+   - Check word size configuration (8-bit)
    - Ensure proper slave select configuration
+   - Verify STM32L4 is configured as SPI slave
+
+3. **Unexpected Response**
+   - Check STM32L4 SPI slave configuration
+   - Verify the slave is sending "Hi from STM32"
+   - Check timing and clock polarity settings
+
+4. **Hardware CS Issues**
+   - **Both devicetree and code must configure CS**
+   - Verify CS pin is properly connected
+   - Check board overlay configuration
+   - Ensure no conflicts with other GPIO usage
 
 ## Serial Logging and Terminal Connection
 
@@ -260,41 +274,6 @@ The nRF52840DK board uses the following default pins for serial communication (U
 - Ensure proper voltage levels (3.3V logic)
 - Connect ground between the board and adapter
 
-### Expected Serial Output
-
-The application provides real-time logging with the following information:
-
-**Normal Operation:**
-```
-*** Booting Zephyr OS build v3.7.1 ***
-SPI Master Example
-SPI device SPI_1 initialized successfully
---- SPI Transaction ---
-Transmitting: Hello from nRF
-Received: [response from STM32L4]
-Transaction completed successfully
-```
-
-**Loopback Mode:**
-```
-*** Booting Zephyr OS build v3.7.1 ***
-SPI Master Example
-=== LOOPBACK MODE ENABLED ===
-Connect MOSI (P0.13) to MISO (P0.14) for loopback testing
-CS pin will be ignored in loopback mode
---- Loopback Test Cycle ---
-Transmitting: Hello from nRF
-Loopback received: Hello from nRF
-✓ Loopback test PASSED - data matches
-```
-
-**Error Conditions:**
-```
-ERROR: SPI device not ready
-ERROR: SPI transaction failed: -5
-ERROR: Failed to initialize SPI device
-```
-
 ### Serial Terminal Troubleshooting
 
 1. **No Output Visible:**
@@ -327,11 +306,7 @@ ERROR: Failed to initialize SPI device
 
 For more detailed debugging, you can:
 
-1. **Enable Verbose Logging:**
-   - Modify `prj.conf` to include additional logging levels
-   - Add `CONFIG_LOG_DEFAULT_LEVEL=4` for debug level logging
-
-2. **Log to File:**
+1. **Log to File:**
    ```bash
    # Redirect serial output to a file
    make monitor | tee spi_log.txt
@@ -340,13 +315,16 @@ For more detailed debugging, you can:
    screen -L /dev/ttyUSB0 115200
    ```
 
-3. **Filter Output:**
+2. **Filter Output:**
    ```bash
    # Show only SPI-related messages
    make monitor | grep -i spi
    
    # Show only error messages
    make monitor | grep -i error
+   
+   # Show only transaction messages
+   make monitor | grep -i transaction
    ```
 
 ## Customization
@@ -354,12 +332,18 @@ For more detailed debugging, you can:
 ### Modifying SPI Parameters
 
 Edit `src/main.c` to change:
-- **Frequency**: Modify `spi_cfg.frequency`
-- **Word Size**: Change `SPI_WORD_SET()` parameter
-- **Chip Select Pin**: Update `CS_PIN` define (default: 15 for P0.15)
-- **Loopback Mode**: Set `LOOPBACK_MODE` to `1` for testing, `0` for normal operation
-- **Slave Select**: Update `spi_cfg.slave`
-- **Transmission Data**: Modify `tx_buffer` content
+- **Frequency**: Modify `spi_cfg.frequency` (currently 125000 Hz)
+- **Word Size**: Change `SPI_WORD_SET()` parameter (currently 8)
+- **Slave Select**: Update `spi_cfg.slave` (currently 0)
+- **Transmission Data**: Modify `tx_message` content
+- **Expected Response**: Update the response validation logic
+- **Transaction Interval**: Change `k_sleep(K_MSEC(10000))` value
+
+### Modifying Hardware CS Configuration
+
+To change the chip select pin, edit both:
+- `boards/nrf52840dk_nrf52840.overlay`: update the `cs-gpios` line
+- `src/main.c`: update the `.cs.gpio` field in `spi_config`
 
 ### Adding New Features
 
@@ -367,22 +351,58 @@ Edit `src/main.c` to change:
 2. **Data Processing**: Implement custom data handling
 3. **Error Handling**: Add retry mechanisms
 4. **Configuration**: Add runtime configuration options
+5. **Multiple Slaves**: Implement multi-slave communication
 
-## Development Workflow
+## Building and Running
 
-1. **Setup Environment**: Ensure Zephyr SDK is properly configured
-2. **Modify Code**: Edit `src/main.c` as needed
-3. **Build**: Use `make build` for compilation (automatically uses pristine build)
-4. **Flash**: Deploy to target with `make flash`
-5. **Monitor**: Observe output with `make monitor`
-6. **Debug**: Use logging and console output for troubleshooting
+### Using Makefile (Recommended)
 
-### Quick Development Cycle
+1. **Build the project (with pristine build):**
+   ```bash
+   make build
+   ```
 
-For rapid development iterations:
+2. **Flash to target device:**
+   ```bash
+   make flash
+   ```
+
+3. **Monitor serial output:**
+   ```bash
+   make monitor
+   ```
+
+4. **Clean build artifacts:**
+   ```bash
+   make clean
+   ```
+
+5. **Full rebuild:**
+   ```bash
+   make rebuild
+   ```
+
+6. **Build and flash in one step:**
+   ```bash
+   make build-flash
+   ```
+
+### Manual Build Commands
+
+If you prefer manual commands:
+
 ```bash
-make build-flash  # Build and flash in one command
-make monitor      # Monitor the output
+# Activate virtual environment
+source ../.venv/bin/activate
+
+# Build the project (with pristine to avoid conflicts)
+west build -b <your_board> . --pristine
+
+# Flash to device
+west flash
+
+# Monitor output
+west espressif monitor
 ```
 
 ## Troubleshooting
@@ -397,6 +417,28 @@ make monitor      # Monitor the output
 - Check hardware connections
 - Verify target device configuration
 - Monitor console output for error messages
+- Ensure STM32L4 is properly configured as SPI slave
+
+### STM32L4 Configuration Requirements
+
+The STM32L4 target device must be configured as an SPI slave with:
+- **Mode**: SPI Slave Mode 0 (CPOL=0, CPHA=0)
+- **Frequency**: Must accept 125kHz master clock
+- **Word Size**: 8 bits
+- **Response**: Must send "Hi from STM32" when receiving "Hello from nRF"
+
+### Hardware CS Troubleshooting
+
+1. **CS Pin Not Working:**
+   - Both devicetree and code must configure CS
+   - Verify the CS pin is not used by other peripherals
+   - Check the board overlay configuration
+   - Ensure the pin is properly connected to the target device
+
+2. **CS Timing Issues:**
+   - Hardware CS provides automatic timing
+   - No manual delays needed
+   - CS is automatically controlled by the SPI driver
 
 ## License
 
@@ -416,4 +458,5 @@ For issues and questions:
 - Check the console output for error messages
 - Verify hardware connections
 - Review Zephyr documentation
-- Check board-specific documentation 
+- Check board-specific documentation
+- Ensure STM32L4 slave configuration is correct 

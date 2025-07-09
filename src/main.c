@@ -7,14 +7,12 @@
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/spi.h>
-#include <zephyr/drivers/gpio.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/util.h>
 #include <string.h>
 
 // SPI Configuration
-#define SPI_NODE DT_NODELABEL(spi1)
-#define CS_PIN 15  // P0.15 for nRF52840DK
+#define SPI_NODE DT_NODELABEL(spi2)
 
 // Message configuration
 #define MESSAGE_SIZE 14
@@ -23,17 +21,17 @@ static uint8_t rx_message[MESSAGE_SIZE];
 
 // SPI device
 static const struct device *spi_dev;
-static const struct device *cs_gpio_dev;
 
 int main(void)
 {
     int ret;
     
-    printk("=== nRF52840 SPI Master - Full Buffer Test ===\n");
-    printk("Target: STM32L431 SPI Slave\n");
+    printk("=== nRF52840 SPI Master - Full Buffer Hardware CS Test ===\n");
+    printk("Target: STM32L4 SPI Slave\n");
     printk("Frequency: 125 kHz\n");
     printk("Mode: CPOL=0, CPHA=0 (Mode 0)\n");
     printk("Data size: 8-bit\n");
+    printk("Chip Select: Hardware CS enabled\n");
     printk("Test: Full buffer transmission\n");
     printk("Send: 'Hello from nRF'\n");
     printk("Expect: 'Hi from STM32'\n");
@@ -47,30 +45,17 @@ int main(void)
     }
     printk("SPI device ready\n");
 
-    // Get CS GPIO device
-    cs_gpio_dev = DEVICE_DT_GET(DT_NODELABEL(gpio0));
-    if (!device_is_ready(cs_gpio_dev)) {
-        printk("ERROR: CS GPIO device not ready\n");
-        return -1;
-    }
-    printk("CS GPIO device ready\n");
-
-    // Configure CS pin as output
-    ret = gpio_pin_configure(cs_gpio_dev, CS_PIN, GPIO_OUTPUT_HIGH);
-    if (ret < 0) {
-        printk("ERROR: Failed to configure CS pin: %d\n", ret);
-        return -1;
-    }
-    printk("CS pin configured as output (HIGH)\n");
-
     printk("\nStarting continuous SPI transmission test...\n");
     printk("Will send: '%s' (%d bytes) every 10 seconds\n", tx_message, MESSAGE_SIZE);
 
-    // SPI configuration for full buffer transmission
+    // SPI configuration for full buffer transmission with hardware CS
     struct spi_config spi_cfg = {
         .frequency = 125000,  // 125 kHz - minimum for nRF52840
         .operation = SPI_OP_MODE_MASTER | SPI_WORD_SET(8) | SPI_TRANSFER_MSB,
         .slave = 0,
+        .cs = {
+            .gpio = GPIO_DT_SPEC_GET(SPI_NODE, cs_gpios),
+        },
     };
 
     // Prepare SPI buffers
@@ -101,25 +86,8 @@ int main(void)
         printk("\n=== Transaction %d ===\n", transaction_count);
         printk("Sending: '%s' (%d bytes)\n", tx_message, MESSAGE_SIZE);
 
-        // Pull CS low to start transaction
-        ret = gpio_pin_set(cs_gpio_dev, CS_PIN, 0);
-        if (ret < 0) {
-            printk("ERROR: Failed to set CS low: %d\n", ret);
-            k_sleep(K_MSEC(10000));
-            continue;
-        }
-        
-        // Small delay for CS to stabilize
-        k_sleep(K_MSEC(1));
-        
-        // Transmit full buffer
+        // Transmit full buffer with hardware CS control
         ret = spi_transceive(spi_dev, &spi_cfg, &tx_set, &rx_set);
-        
-        // Pull CS high to end transaction
-        ret = gpio_pin_set(cs_gpio_dev, CS_PIN, 1);
-        if (ret < 0) {
-            printk("ERROR: Failed to set CS high: %d\n", ret);
-        }
         
         if (ret < 0) {
             printk("ERROR: SPI transaction failed: %d\n", ret);
