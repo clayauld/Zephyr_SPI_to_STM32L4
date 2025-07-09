@@ -1,114 +1,159 @@
 /*
- * Copyright (c) 2023 Nordic Semiconductor ASA
+ * Copyright (c) 2024 Nordic Semiconductor ASA
  *
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <zephyr/kernel.h>
+#include <zephyr/device.h>
 #include <zephyr/drivers/spi.h>
 #include <zephyr/drivers/gpio.h>
-#include <zephyr/logging/log.h>
+#include <zephyr/sys/printk.h>
+#include <zephyr/sys/util.h>
+#include <string.h>
 
-LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
-
+// SPI Configuration
 #define SPI_NODE DT_NODELABEL(spi1)
 #define CS_PIN 15  // P0.15 for nRF52840DK
 
-// Loopback configuration
-#define LOOPBACK_MODE 0  // Set to 1 for loopback, 0 for normal operation
+// Message configuration
+#define MESSAGE_SIZE 14
+static const uint8_t tx_message[] = "Hello from nRF";
+static uint8_t rx_message[MESSAGE_SIZE];
+
+// SPI device
+static const struct device *spi_dev;
+static const struct device *cs_gpio_dev;
 
 int main(void)
 {
-	const struct device *spi_dev = DEVICE_DT_GET(SPI_NODE);
-	
-	if (!device_is_ready(spi_dev)) {
-		LOG_ERR("SPI device not ready.");
-		return 0;
-	}
+    int ret;
+    
+    printk("=== nRF52840 SPI Master - Full Buffer Test ===\n");
+    printk("Target: STM32L431 SPI Slave\n");
+    printk("Frequency: 125 kHz\n");
+    printk("Mode: CPOL=0, CPHA=0 (Mode 0)\n");
+    printk("Data size: 8-bit\n");
+    printk("Test: Full buffer transmission\n");
+    printk("Send: 'Hello from nRF'\n");
+    printk("Expect: 'Hi from STM32'\n");
+    printk("==============================================\n\n");
 
-	// Configure CS pin
-	const struct device *cs_gpio = DEVICE_DT_GET(DT_NODELABEL(gpio0));
-	if (!device_is_ready(cs_gpio)) {
-		LOG_ERR("GPIO device not ready.");
-		return 0;
-	}
+    // Get SPI device
+    spi_dev = DEVICE_DT_GET(SPI_NODE);
+    if (!device_is_ready(spi_dev)) {
+        printk("ERROR: SPI device not ready\n");
+        return -1;
+    }
+    printk("SPI device ready\n");
 
-	// Configure CS pin as output and set it high initially
-	gpio_pin_configure(cs_gpio, CS_PIN, GPIO_OUTPUT_HIGH);
-	LOG_INF("CS pin configured as output");
+    // Get CS GPIO device
+    cs_gpio_dev = DEVICE_DT_GET(DT_NODELABEL(gpio0));
+    if (!device_is_ready(cs_gpio_dev)) {
+        printk("ERROR: CS GPIO device not ready\n");
+        return -1;
+    }
+    printk("CS GPIO device ready\n");
 
-#if LOOPBACK_MODE
-	LOG_INF("=== LOOPBACK MODE ENABLED ===");
-	LOG_INF("Connect MOSI (P0.13) to MISO (P0.14) for loopback testing");
-	LOG_INF("CS pin will be ignored in loopback mode");
-#endif
+    // Configure CS pin as output
+    ret = gpio_pin_configure(cs_gpio_dev, CS_PIN, GPIO_OUTPUT_HIGH);
+    if (ret < 0) {
+        printk("ERROR: Failed to configure CS pin: %d\n", ret);
+        return -1;
+    }
+    printk("CS pin configured as output (HIGH)\n");
 
-	uint8_t tx_buffer[] = "Hello from nRF";
-	uint8_t rx_buffer[sizeof(tx_buffer)];
+    printk("\nStarting continuous SPI transmission test...\n");
+    printk("Will send: '%s' (%d bytes) every 10 seconds\n", tx_message, MESSAGE_SIZE);
 
-	const struct spi_buf tx_buf = {
-		.buf = tx_buffer,
-		.len = sizeof(tx_buffer)
-	};
-	const struct spi_buf_set tx_bufs = {
-		.buffers = &tx_buf,
-		.count = 1
-	};
+    // SPI configuration for full buffer transmission
+    struct spi_config spi_cfg = {
+        .frequency = 125000,  // 125 kHz - minimum for nRF52840
+        .operation = SPI_OP_MODE_MASTER | SPI_WORD_SET(8) | SPI_TRANSFER_MSB,
+        .slave = 0,
+    };
 
-	struct spi_buf rx_buf = {
-		.buf = rx_buffer,
-		.len = sizeof(rx_buffer),
-	};
+    // Prepare SPI buffers
+    struct spi_buf tx_buf = {
+        .buf = (void*)tx_message,
+        .len = MESSAGE_SIZE
+    };
+    
+    struct spi_buf rx_buf = {
+        .buf = rx_message,
+        .len = MESSAGE_SIZE
+    };
+    
+    const struct spi_buf_set tx_set = {
+        .buffers = &tx_buf,
+        .count = 1
+    };
+    
+    const struct spi_buf_set rx_set = {
+        .buffers = &rx_buf,
+        .count = 1
+    };
 
-	const struct spi_buf_set rx_bufs = {
-		.buffers = &rx_buf,
-		.count = 1
-	};
+    int transaction_count = 0;
+    
+    while (1) {
+        transaction_count++;
+        printk("\n=== Transaction %d ===\n", transaction_count);
+        printk("Sending: '%s' (%d bytes)\n", tx_message, MESSAGE_SIZE);
 
-	struct spi_config spi_cfg = {
-		.operation = SPI_OP_MODE_MASTER | SPI_WORD_SET(8) | SPI_HOLD_ON_CS | SPI_LOCK_ON,
-		.frequency = 1000000,  // 1 MHz
-		.slave = 0,
-	};
-
-#if LOOPBACK_MODE
-	// For loopback, we don't need chip select control
-	spi_cfg.operation = SPI_OP_MODE_MASTER | SPI_WORD_SET(8);
-#endif
-
-	while (1) {
-#if LOOPBACK_MODE
-		LOG_INF("--- Loopback Test Cycle ---");
-#else
-		// Assert CS (set low) before transmission
-		gpio_pin_set(cs_gpio, CS_PIN, 0);
-		LOG_INF("CS asserted (low)");
-#endif
-    LOG_INF("Transmitting: %s", tx_buffer);
-		int error = spi_transceive(spi_dev, &spi_cfg, &tx_bufs, &rx_bufs);
-		if (error) {
-			LOG_ERR("SPI transceive error: %d", error);
-		} else {
-#if LOOPBACK_MODE
-			LOG_INF("Loopback received: %s", rx_buffer);
-			// Verify loopback data matches transmitted data
-			if (memcmp(tx_buffer, rx_buffer, sizeof(tx_buffer)) == 0) {
-				LOG_INF("✓ Loopback test PASSED - data matches");
-			} else {
-				LOG_ERR("✗ Loopback test FAILED - data mismatch");
-			}
-#else
-			LOG_INF("Received: %s", rx_buffer);
-#endif
-		}
-		
-#if !LOOPBACK_MODE
-		// Deassert CS (set high) after transmission
-		gpio_pin_set(cs_gpio, CS_PIN, 1);
-		LOG_INF("CS deasserted (high)");
-#endif
-		
-		k_sleep(K_MSEC(1000));
-	}
-	return 0;
+        // Pull CS low to start transaction
+        ret = gpio_pin_set(cs_gpio_dev, CS_PIN, 0);
+        if (ret < 0) {
+            printk("ERROR: Failed to set CS low: %d\n", ret);
+            k_sleep(K_MSEC(10000));
+            continue;
+        }
+        
+        // Small delay for CS to stabilize
+        k_sleep(K_MSEC(1));
+        
+        // Transmit full buffer
+        ret = spi_transceive(spi_dev, &spi_cfg, &tx_set, &rx_set);
+        
+        // Pull CS high to end transaction
+        ret = gpio_pin_set(cs_gpio_dev, CS_PIN, 1);
+        if (ret < 0) {
+            printk("ERROR: Failed to set CS high: %d\n", ret);
+        }
+        
+        if (ret < 0) {
+            printk("ERROR: SPI transaction failed: %d\n", ret);
+        } else {
+            printk("SPI transaction completed successfully!\n");
+            printk("Sent: '%s'\n", tx_message);
+            printk("Received: ");
+            for (int i = 0; i < MESSAGE_SIZE; i++) {
+                printk("%02X ", rx_message[i]);
+            }
+            printk("\n");
+            
+            // Print received data as ASCII
+            printk("Received ASCII: ");
+            for (int i = 0; i < MESSAGE_SIZE; i++) {
+                if (rx_message[i] >= 32 && rx_message[i] <= 126) {
+                    printk("%c", rx_message[i]);
+                } else {
+                    printk("\\x%02X", rx_message[i]);
+                }
+            }
+            printk("\n");
+            
+            // Check if we received the expected response
+            if (strncmp((char*)rx_message, "Hi from STM32", 14) == 0) {
+                printk("SUCCESS: Received expected response 'Hi from STM32'\n");
+            } else {
+                printk("ERROR: Unexpected response received\n");
+            }
+        }
+        
+        printk("Waiting 10 seconds before next transaction...\n");
+        k_sleep(K_MSEC(10000));  // Wait 10 seconds
+    }
+    
+    return 0;
 } 
